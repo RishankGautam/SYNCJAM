@@ -14,19 +14,18 @@ button{background:#7c5cff;color:#fff;cursor:pointer}button.s{background:#2a2a38;
 <button onclick="go()">Join & Listen</button></div>
 <div class="wrap" id="app" style="display:none">
 <h1>🎧 SyncJam <span class="muted" id="users"></span></h1>
-<div id="player"></div>
+<div style="position:relative"><div id="player"></div><button id="tap" onclick="tapPlay()" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:16px 28px;font-size:18px">▶ Tap to play</button></div><div id="status" class="muted"></div>
 <div class="row" style="align-items:center"><span id="cur" class="muted">0:00</span><input type="range" id="seek" min="0" max="100" value="0" step="1"><span id="dur" class="muted">0:00</span></div>
 <div class="row" style="align-items:center;flex-wrap:wrap"><button class="s" id="pp" onclick="toggle()">⏯</button><button class="s" onclick="send({type:'skip'})">⏭ Skip</button>
 <button class="s" onclick="navigator.clipboard.writeText(location.origin+'/?room='+room);this.textContent='Copied!'">🔗 Invite link</button><span>🔊</span><input type="range" id="vol" min="0" max="100" value="80" style="width:110px;padding:0;accent-color:#7c5cff"></div>
 <div class="row"><input id="q" placeholder="Search a song, press Enter" onkeydown="if(event.key==='Enter')search()"><button onclick="search()">Search</button></div>
 <div id="results"></div><h3>Queue</h3><div id="queue"></div></div>
-<script src="https://www.youtube.com/iframe_api"></script>
 <script>
 let ws,player,ready=false,S=null,off=0,room,curId=null;
 const $=id=>document.getElementById(id);
 $('room').value=new URLSearchParams(location.search).get('room')||'main';
 function send(o){ws.send(JSON.stringify(o))}
-function onYouTubeIframeAPIReady(){player=new YT.Player('player',{width:'100%',height:'100%',playerVars:{playsinline:1,rel:0,controls:0,disablekb:1},
+function onYouTubeIframeAPIReady(){if(player)return;player=new YT.Player('player',{width:'100%',height:'100%',playerVars:{playsinline:1,rel:0,controls:0,disablekb:1},
  events:{onReady:()=>{ready=true;player.setVolume(vol);apply()},onStateChange:e=>{if(e.data===0&&S&&S.cur)send({type:'ended',id:S.cur.id})},
  onError:()=>{S&&S.cur&&send({type:'ended',id:S.cur.id})}}})}
 function go(){room=$('room').value.trim()||'main';$('join').style.display='none';$('app').style.display='block';
@@ -49,7 +48,7 @@ $('vol').addEventListener('input',()=>{vol=+$('vol').value;if(ready)player.setVo
 let drag=false;
 const fmt=t=>{t=Math.floor(t||0);return Math.floor(t/60)+':'+String(t%60).padStart(2,'0')};
 setInterval(()=>{if(!ready||!S||!S.cur||drag)return;const d=player.getDuration()||0,c=player.getCurrentTime()||0;
- $('seek').max=d;$('seek').value=c;$('cur').textContent=fmt(c);$('dur').textContent=fmt(d)},500);
+ if(!d)return;$('seek').max=d;$('seek').value=c;$('cur').textContent=fmt(c);$('dur').textContent=fmt(d)},500);
 $('seek').addEventListener('input',()=>{drag=true;$('cur').textContent=fmt($('seek').value)});
 $('seek').addEventListener('change',()=>{drag=false;send({type:'seek',pos:+$('seek').value})});
 function toggle(){if(!S||!S.cur)return;send({type:S.paused?'resume':'pause'})}
@@ -61,4 +60,15 @@ async function search(){const q=$('q').value.trim();if(!q)return;
  const r=await (await fetch('/search?q='+encodeURIComponent(q))).json();window.R=r;
  $('results').innerHTML=r.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+' <span class="muted">'+(v.dur||'')+'</span></div><button class="s" onclick="add('+i+')">+ Add</button></div>').join('')}
 function add(i){send({type:'add',video:window.R[i]});$('results').innerHTML='';$('q').value=''}
+let bad=0;
+function tapPlay(){try{player.unMute();player.setVolume(vol);player.playVideo()}catch(e){}$('tap').style.display='none';bad=0}
+setInterval(()=>{
+ if(!ready){$('status').textContent='Loading player… (if stuck: refresh, or turn off adblock)';return}
+ if(!S||!S.cur){$('status').textContent='Add a song to start';$('tap').style.display='none';return}
+ $('status').textContent='';
+ const st=player.getPlayerState();
+ if(!S.paused&&st!==1&&st!==3){if(++bad>=2){$('tap').style.display='block'}}else{bad=0;$('tap').style.display='none'}
+},1000);
+if(window.YT&&YT.Player)onYouTubeIframeAPIReady();
+else{const t=document.createElement('script');t.src='https://www.youtube.com/iframe_api';document.head.appendChild(t)}
 </script></body></html>
