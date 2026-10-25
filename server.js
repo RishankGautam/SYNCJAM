@@ -2,7 +2,7 @@ const express = require('express'), http = require('http');
 const { WebSocketServer } = require('ws');
 const YT = require('youtube-sr').default;
 const app = express();
-app.use(express.static(__dirname + '/public'));
+app.use(express.static(__dirname));
 app.get('/search', async (req, res) => {
   try {
     const r = await YT.search(String(req.query.q || ''), { limit: 6, type: 'video' });
