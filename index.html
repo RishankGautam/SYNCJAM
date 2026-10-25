@@ -7,7 +7,7 @@ input,button{padding:12px;border-radius:10px;border:0;font-size:16px}input{backg
 button{background:#7c5cff;color:#fff;cursor:pointer}button.s{background:#2a2a38;padding:8px 12px}
 .row{display:flex;gap:8px;margin:8px 0}.card{background:#1a1a24;border-radius:12px;padding:10px;margin:6px 0;display:flex;gap:10px;align-items:center}
 .card img{width:80px;border-radius:6px}.card .t{flex:1;font-size:14px}#join{max-width:360px;margin:20vh auto;display:flex;flex-direction:column;gap:10px}
-#player{width:100%;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000}.muted{color:#999;font-size:13px}
+#player{width:100%;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000}.muted{color:#999;font-size:13px}#player{pointer-events:none}#seek{padding:0;accent-color:#7c5cff}
 </style></head><body>
 <div id="join"><h1>🎧 SyncJam</h1>
 <input id="name" placeholder="Your name"><input id="room" placeholder="Room name (share with friends)" value="main">
@@ -15,6 +15,7 @@ button{background:#7c5cff;color:#fff;cursor:pointer}button.s{background:#2a2a38;
 <div class="wrap" id="app" style="display:none">
 <h1>🎧 SyncJam <span class="muted" id="users"></span></h1>
 <div id="player"></div>
+<div class="row" style="align-items:center"><span id="cur" class="muted">0:00</span><input type="range" id="seek" min="0" max="100" value="0" step="1"><span id="dur" class="muted">0:00</span></div>
 <div class="row"><button class="s" id="pp" onclick="toggle()">⏯</button><button class="s" onclick="send({type:'skip'})">⏭ Skip</button>
 <button class="s" onclick="navigator.clipboard.writeText(location.origin+'/?room='+room);this.textContent='Copied!'">🔗 Invite link</button></div>
 <div class="row"><input id="q" placeholder="Search a song, press Enter" onkeydown="if(event.key==='Enter')search()"><button onclick="search()">Search</button></div>
@@ -25,7 +26,7 @@ let ws,player,ready=false,S=null,off=0,room,curId=null;
 const $=id=>document.getElementById(id);
 $('room').value=new URLSearchParams(location.search).get('room')||'main';
 function send(o){ws.send(JSON.stringify(o))}
-function onYouTubeIframeAPIReady(){player=new YT.Player('player',{width:'100%',height:'100%',playerVars:{playsinline:1,rel:0},
+function onYouTubeIframeAPIReady(){player=new YT.Player('player',{width:'100%',height:'100%',playerVars:{playsinline:1,rel:0,controls:0,disablekb:1},
  events:{onReady:()=>{ready=true;apply()},onStateChange:e=>{if(e.data===0&&S&&S.cur)send({type:'ended',id:S.cur.id})},
  onError:()=>{S&&S.cur&&send({type:'ended',id:S.cur.id})}}})}
 function go(){room=$('room').value.trim()||'main';$('join').style.display='none';$('app').style.display='block';
@@ -42,6 +43,12 @@ function apply(){if(!ready||!S)return;
  if(S.paused){if(ps!==2)player.pauseVideo();if(Math.abs(player.getCurrentTime()-t)>1)player.seekTo(t,true)}
  else{if(ps===2||ps===5||ps===-1)player.playVideo();if(Math.abs(player.getCurrentTime()-t)>2)player.seekTo(t,true)}}
 setInterval(apply,4000);
+let drag=false;
+const fmt=t=>{t=Math.floor(t||0);return Math.floor(t/60)+':'+String(t%60).padStart(2,'0')};
+setInterval(()=>{if(!ready||!S||!S.cur||drag)return;const d=player.getDuration()||0,c=player.getCurrentTime()||0;
+ $('seek').max=d;$('seek').value=c;$('cur').textContent=fmt(c);$('dur').textContent=fmt(d)},500);
+$('seek').addEventListener('input',()=>{drag=true;$('cur').textContent=fmt($('seek').value)});
+$('seek').addEventListener('change',()=>{drag=false;send({type:'seek',pos:+$('seek').value})});
 function toggle(){if(!S||!S.cur)return;send({type:S.paused?'resume':'pause'})}
 function render(){$('users').textContent='· 👥 '+S.users.join(', ');$('pp').textContent=S.paused?'▶ Play':'⏸ Pause';
  $('queue').innerHTML=(S.cur?'<div class="card"><div class="t">▶ '+esc(S.cur.title)+'</div></div>':'')+
