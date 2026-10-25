@@ -1,0 +1,54 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SyncJam</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#0f0f14;color:#eee}
+.wrap{max-width:720px;margin:0 auto;padding:16px}h1{margin:8px 0}
+input,button{padding:12px;border-radius:10px;border:0;font-size:16px}input{background:#1d1d27;color:#fff;width:100%}
+button{background:#7c5cff;color:#fff;cursor:pointer}button.s{background:#2a2a38;padding:8px 12px}
+.row{display:flex;gap:8px;margin:8px 0}.card{background:#1a1a24;border-radius:12px;padding:10px;margin:6px 0;display:flex;gap:10px;align-items:center}
+.card img{width:80px;border-radius:6px}.card .t{flex:1;font-size:14px}#join{max-width:360px;margin:20vh auto;display:flex;flex-direction:column;gap:10px}
+#player{width:100%;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000}.muted{color:#999;font-size:13px}
+</style></head><body>
+<div id="join"><h1>🎧 SyncJam</h1>
+<input id="name" placeholder="Your name"><input id="room" placeholder="Room name (share with friends)" value="main">
+<button onclick="go()">Join & Listen</button></div>
+<div class="wrap" id="app" style="display:none">
+<h1>🎧 SyncJam <span class="muted" id="users"></span></h1>
+<div id="player"></div>
+<div class="row"><button class="s" id="pp" onclick="toggle()">⏯</button><button class="s" onclick="send({type:'skip'})">⏭ Skip</button>
+<button class="s" onclick="navigator.clipboard.writeText(location.origin+'/?room='+room);this.textContent='Copied!'">🔗 Invite link</button></div>
+<div class="row"><input id="q" placeholder="Search a song, press Enter" onkeydown="if(event.key==='Enter')search()"><button onclick="search()">Search</button></div>
+<div id="results"></div><h3>Queue</h3><div id="queue"></div></div>
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+let ws,player,ready=false,S=null,off=0,room,curId=null;
+const $=id=>document.getElementById(id);
+$('room').value=new URLSearchParams(location.search).get('room')||'main';
+function send(o){ws.send(JSON.stringify(o))}
+function onYouTubeIframeAPIReady(){player=new YT.Player('player',{width:'100%',height:'100%',playerVars:{playsinline:1,rel:0},
+ events:{onReady:()=>{ready=true;apply()},onStateChange:e=>{if(e.data===0&&S&&S.cur)send({type:'ended',id:S.cur.id})},
+ onError:()=>{S&&S.cur&&send({type:'ended',id:S.cur.id})}}})}
+function go(){room=$('room').value.trim()||'main';$('join').style.display='none';$('app').style.display='block';
+ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
+ ws.onopen=()=>send({type:'join',room,name:$('name').value||'guest'});
+ ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='state'){S=m;off=m.now-Date.now();render();apply()}};
+ ws.onclose=()=>setTimeout(()=>location.reload(),2000)}
+function target(){return S.paused?S.pausedPos:(Date.now()+off-S.startedAt)/1000}
+function apply(){if(!ready||!S)return;
+ if(!S.cur){player.stopVideo();curId=null;return}
+ const t=Math.max(0,target());
+ if(curId!==S.cur.id){curId=S.cur.id;player.loadVideoById(S.cur.id,t);if(S.paused)setTimeout(()=>player.pauseVideo(),500);return}
+ const ps=player.getPlayerState();
+ if(S.paused){if(ps!==2)player.pauseVideo();if(Math.abs(player.getCurrentTime()-t)>1)player.seekTo(t,true)}
+ else{if(ps===2||ps===5||ps===-1)player.playVideo();if(Math.abs(player.getCurrentTime()-t)>2)player.seekTo(t,true)}}
+setInterval(apply,4000);
+function toggle(){if(!S||!S.cur)return;send({type:S.paused?'resume':'pause'})}
+function render(){$('users').textContent='· 👥 '+S.users.join(', ');$('pp').textContent=S.paused?'▶ Play':'⏸ Pause';
+ $('queue').innerHTML=(S.cur?'<div class="card"><div class="t">▶ '+esc(S.cur.title)+'</div></div>':'')+
+ S.queue.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+'</div><button class="s" onclick="send({type:\'remove\',index:'+i+'})">✕</button></div>').join('')||'<p class="muted">Nothing queued</p>'}
+function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+async function search(){const q=$('q').value.trim();if(!q)return;
+ const r=await (await fetch('/search?q='+encodeURIComponent(q))).json();window.R=r;
+ $('results').innerHTML=r.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+' <span class="muted">'+(v.dur||'')+'</span></div><button class="s" onclick="add('+i+')">+ Add</button></div>').join('')}
+function add(i){send({type:'add',video:window.R[i]});$('results').innerHTML='';$('q').value=''}
+</script></body></html>
