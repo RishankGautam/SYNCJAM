@@ -19,7 +19,7 @@ button{background:#7c5cff;color:#fff;cursor:pointer}button.s{background:#2a2a38;
 <div class="row" style="align-items:center;flex-wrap:wrap"><button class="s" id="pp" onclick="toggle()">⏯</button><button class="s" onclick="send({type:'skip'})">⏭ Skip</button>
 <button class="s" onclick="navigator.clipboard.writeText(location.origin+'/?room='+room);this.textContent='Copied!'">🔗 Invite link</button><span>🔊</span><input type="range" id="vol" min="0" max="100" value="80" style="width:110px;padding:0;accent-color:#7c5cff"></div>
 <div class="row" style="align-items:center;flex-wrap:wrap"><button class="s" id="mic" onclick="toggleMic()">🎤 Mic: OFF</button><span class="muted">Mic volume</span><input type="range" id="micvol" min="0" max="200" value="100" style="width:120px;padding:0;accent-color:#7c5cff"><span class="muted" id="micpct">100%</span></div>
-<div class="row"><input id="q" placeholder="Search a song, press Enter" onkeydown="if(event.key==='Enter')search()"><button onclick="search()">Search</button></div>
+<div class="row"><input id="q" placeholder="Search a song or paste a YouTube link" onkeydown="if(event.key==='Enter')search()"><button onclick="search()">Search</button></div>
 <div id="results"></div><h3>Queue</h3><div id="queue"></div></div>
 <script>
 let ws,player,ready=false,S=null,off=0,room,curId=null;
@@ -58,7 +58,11 @@ function render(){$('users').textContent='· 👥 '+S.users.map(u=>u.name).join(
  S.queue.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+'</div><button class="s" onclick="send({type:\'remove\',index:'+i+'})">✕</button></div>').join('')||'<p class="muted">Nothing queued</p>'}
 function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 async function search(){const q=$('q').value.trim();if(!q)return;
- const r=await (await fetch('/search?q='+encodeURIComponent(q))).json();window.R=r;
+ $('results').innerHTML='<p class="muted">Searching…</p>';
+ let r=[];try{const j=await (await fetch('/search?q='+encodeURIComponent(q))).json();r=j.results||[];
+  if(!r.length){$('results').innerHTML='<p class="muted">'+esc(j.error||'No results')+'</p>';return}}
+ catch(e){$('results').innerHTML='<p class="muted">Search failed, try again</p>';return}
+ window.R=r;
  $('results').innerHTML=r.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+' <span class="muted">'+(v.dur||'')+'</span></div><button class="s" onclick="add('+i+')">+ Add</button></div>').join('')}
 function add(i){send({type:'add',video:window.R[i]});$('results').innerHTML='';$('q').value=''}
 let myId=null,micOn=false,micStream=null,micTrack=null,actx=null,gainNode=null;const peers={};
