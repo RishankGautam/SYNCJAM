@@ -2,7 +2,7 @@ const express = require('express'), http = require('http');
 const { WebSocketServer } = require('ws');
 const YT = require('youtube-sr').default;
 const app = express();
-app.use(express.static(__dirname));
+app.use(express.static(__dirname ));
 const KEY = process.env.YT_API_KEY;
 const ID_RE = /(?:youtu\.be\/|[?&]v=|shorts\/|embed\/)([\w-]{11})/;
 const dec = s => String(s).replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
