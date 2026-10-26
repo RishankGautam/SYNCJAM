@@ -2,7 +2,7 @@ const express = require('express'), http = require('http');
 const { WebSocketServer } = require('ws');
 const YT = require('youtube-sr').default;
 const app = express();
-app.use(express.static(__dirname));
+app.use(express.static(__dirname + '/public'));
 app.get('/search', async (req, res) => {
   try {
     const r = await YT.search(String(req.query.q || ''), { limit: 6, type: 'video' });
@@ -16,7 +16,7 @@ const getRoom = n => rooms[n] || (rooms[n] = { queue: [], cur: null, startedAt: 
 const pos = r => r.paused ? r.pausedPos : (Date.now() - r.startedAt) / 1000;
 function bc(r) {
   const s = JSON.stringify({ type: 'state', now: Date.now(), queue: r.queue, cur: r.cur, startedAt: r.startedAt,
-    paused: r.paused, pausedPos: r.pausedPos, users: [...r.users].map(u => u.name) });
+    paused: r.paused, pausedPos: r.pausedPos, users: [...r.users].map(u => ({ id: u.id, name: u.name })) });
   r.users.forEach(u => u.ws.readyState === 1 && u.ws.send(s));
 }
 function next(r) { r.cur = r.queue.shift() || null; r.startedAt = Date.now(); r.paused = false; r.pausedPos = 0; }
@@ -26,10 +26,15 @@ wss.on('connection', ws => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (m.type === 'join') {
       r = getRoom(String(m.room || 'main').slice(0, 30));
-      u = { ws, name: String(m.name || 'guest').slice(0, 20) };
-      r.users.add(u); return bc(r);
+      u = { ws, name: String(m.name || 'guest').slice(0, 20), id: Math.random().toString(36).slice(2, 10) };
+      r.users.add(u); ws.send(JSON.stringify({ type: 'welcome', id: u.id })); return bc(r);
     }
     if (!r) return;
+    if (m.type === 'signal') {
+      const t = [...r.users].find(x => x.id === m.to);
+      if (t && t.ws.readyState === 1) t.ws.send(JSON.stringify({ type: 'signal', from: u.id, data: m.data }));
+      return;
+    }
     if (m.type === 'add' && m.video) { r.cur ? r.queue.push(m.video) : (r.queue.push(m.video), next(r)); }
     else if (m.type === 'skip') next(r);
     else if (m.type === 'pause' && r.cur && !r.paused) { r.pausedPos = pos(r); r.paused = true; }
