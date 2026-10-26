@@ -18,7 +18,6 @@ button{background:#7c5cff;color:#fff;cursor:pointer}button.s{background:#2a2a38;
 <div class="row" style="align-items:center"><span id="cur" class="muted">0:00</span><input type="range" id="seek" min="0" max="100" value="0" step="1"><span id="dur" class="muted">0:00</span></div>
 <div class="row" style="align-items:center;flex-wrap:wrap"><button class="s" id="pp" onclick="toggle()">⏯</button><button class="s" onclick="send({type:'skip'})">⏭ Skip</button>
 <button class="s" onclick="navigator.clipboard.writeText(location.origin+'/?room='+room);this.textContent='Copied!'">🔗 Invite link</button><span>🔊</span><input type="range" id="vol" min="0" max="100" value="80" style="width:110px;padding:0;accent-color:#7c5cff"></div>
-<div class="row" style="align-items:center;flex-wrap:wrap"><button class="s" id="mic" onclick="toggleMic()">🎤 Mic: OFF</button><span class="muted">Mic volume</span><input type="range" id="micvol" min="0" max="200" value="100" style="width:120px;padding:0;accent-color:#7c5cff"><span class="muted" id="micpct">100%</span></div>
 <div class="row"><input id="q" placeholder="Search a song or paste a YouTube link" onkeydown="if(event.key==='Enter')search()"><button onclick="search()">Search</button></div>
 <div id="results"></div><h3>Queue</h3><div id="queue"></div></div>
 <script>
@@ -32,7 +31,7 @@ function onYouTubeIframeAPIReady(){if(player)return;player=new YT.Player('player
 function go(){room=$('room').value.trim()||'main';$('join').style.display='none';$('app').style.display='block';
  ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
  ws.onopen=()=>send({type:'join',room,name:$('name').value||'guest'});
- ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='state'){S=m;off=m.now-Date.now();render();apply();syncPeers()}else if(m.type==='welcome')myId=m.id;else if(m.type==='signal')onSignal(m.from,m.data)};
+ ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='state'){S=m;off=m.now-Date.now();render();apply()}};
  ws.onclose=()=>setTimeout(()=>location.reload(),2000)}
 function target(){return S.paused?S.pausedPos:(Date.now()+off-S.startedAt)/1000}
 function apply(){if(!ready||!S)return;
@@ -53,7 +52,7 @@ setInterval(()=>{if(!ready||!S||!S.cur||drag)return;const d=player.getDuration()
 $('seek').addEventListener('input',()=>{drag=true;$('cur').textContent=fmt($('seek').value)});
 $('seek').addEventListener('change',()=>{drag=false;send({type:'seek',pos:+$('seek').value})});
 function toggle(){if(!S||!S.cur)return;send({type:S.paused?'resume':'pause'})}
-function render(){$('users').textContent='· 👥 '+S.users.map(u=>u.name).join(', ');$('pp').textContent=S.paused?'▶ Play':'⏸ Pause';
+function render(){$('users').textContent='· 👥 '+S.users.map(u=>u.name||u).join(', ');$('pp').textContent=S.paused?'▶ Play':'⏸ Pause';
  $('queue').innerHTML=(S.cur?'<div class="card"><div class="t">▶ '+esc(S.cur.title)+'</div></div>':'')+
  S.queue.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+'</div><button class="s" onclick="send({type:\'remove\',index:'+i+'})">✕</button></div>').join('')||'<p class="muted">Nothing queued</p>'}
 function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
@@ -65,39 +64,6 @@ async function search(){const q=$('q').value.trim();if(!q)return;
  window.R=r;
  $('results').innerHTML=r.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+' <span class="muted">'+(v.dur||'')+'</span></div><button class="s" onclick="add('+i+')">+ Add</button></div>').join('')}
 function add(i){send({type:'add',video:window.R[i]});$('results').innerHTML='';$('q').value=''}
-let myId=null,micOn=false,micStream=null,micTrack=null,actx=null,gainNode=null;const peers={};
-function makePeer(id,init){
- const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]});
- const p={pc,q:Promise.resolve(),sender:null,el:null};peers[id]=p;
- if(init){const tr=pc.addTransceiver('audio',{direction:'sendrecv'});p.sender=tr.sender;if(micTrack)p.sender.replaceTrack(micTrack);
-  pc.onnegotiationneeded=async()=>{await pc.setLocalDescription(await pc.createOffer());send({type:'signal',to:id,data:{sdp:pc.localDescription}})}}
- pc.onicecandidate=e=>{if(e.candidate)send({type:'signal',to:id,data:{ice:e.candidate}})};
- pc.ontrack=e=>{const a=new Audio();a.autoplay=true;a.srcObject=new MediaStream([e.track]);p.el=a;a.play().catch(()=>{})};
- return p}
-function onSignal(from,d){
- const p=peers[from]||makePeer(from,false);
- p.q=p.q.then(async()=>{const pc=p.pc;
-  if(d.sdp){await pc.setRemoteDescription(d.sdp);
-   if(d.sdp.type==='offer'){const tr=pc.getTransceivers()[0];tr.direction='sendrecv';p.sender=tr.sender;if(micTrack)p.sender.replaceTrack(micTrack);
-    await pc.setLocalDescription(await pc.createAnswer());send({type:'signal',to:from,data:{sdp:pc.localDescription}})}}
-  else if(d.ice){try{await pc.addIceCandidate(d.ice)}catch(e){}}
- }).catch(e=>console.log(e))}
-function syncPeers(){if(!myId||!S)return;
- const ids=S.users.map(u=>u.id).filter(i=>i!==myId);
- ids.forEach(i=>{if(!peers[i])makePeer(i,myId>i)});
- Object.keys(peers).forEach(i=>{if(!ids.includes(i)){peers[i].pc.close();if(peers[i].el)peers[i].el.srcObject=null;delete peers[i]}})}
-async function toggleMic(){
- if(!micOn){
-  try{micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}})}
-  catch(e){alert('Mic blocked. Allow microphone for this site in your browser.');return}
-  actx=actx||new (window.AudioContext||window.webkitAudioContext)();await actx.resume();
-  const src=actx.createMediaStreamSource(micStream);gainNode=actx.createGain();gainNode.gain.value=$('micvol').value/100;
-  const dest=actx.createMediaStreamDestination();src.connect(gainNode);gainNode.connect(dest);
-  micTrack=dest.stream.getAudioTracks()[0];micOn=true}
- else{micStream.getTracks().forEach(t=>t.stop());micTrack=null;micOn=false}
- Object.values(peers).forEach(p=>{if(p.sender)p.sender.replaceTrack(micTrack)});
- $('mic').textContent=micOn?'🎤 Mic: ON':'🎤 Mic: OFF';$('mic').style.background=micOn?'#22a05a':''}
-$('micvol').addEventListener('input',()=>{$('micpct').textContent=$('micvol').value+'%';if(gainNode)gainNode.gain.value=$('micvol').value/100});
 let bad=0;
 function tapPlay(){try{player.unMute();player.setVolume(vol);player.playVideo()}catch(e){}$('tap').style.display='none';bad=0}
 setInterval(()=>{
