@@ -1,11 +1,34 @@
 const express = require('express'), http = require('http');
 const { WebSocketServer } = require('ws');
-const YT = require('youtube-sr').default;
 const app = express();
-app.use(express.static(__dirname ));
+app.use(express.static(__dirname + '/public'));
 const KEY = process.env.YT_API_KEY;
 const ID_RE = /(?:youtu\.be\/|[?&]v=|shorts\/|embed\/)([\w-]{11})/;
 const dec = s => String(s).replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+function parseResults(html) {
+  const m = html.match(/var ytInitialData = (\{.*?\});<\/script>/s) || html.match(/ytInitialData"\]\s*=\s*(\{.*?\});/s);
+  if (!m) throw new Error('YouTube did not return a results page');
+  const out = [], seen = new Set();
+  (function walk(o) {
+    if (!o || typeof o !== 'object' || out.length >= 8) return;
+    const v = o.videoRenderer;
+    if (v && v.videoId && !seen.has(v.videoId)) {
+      seen.add(v.videoId);
+      const t = v.title && v.title.runs && v.title.runs[0] && v.title.runs[0].text;
+      out.push({ id: v.videoId, title: t || ('YouTube video ' + v.videoId), thumb: 'https://i.ytimg.com/vi/' + v.videoId + '/mqdefault.jpg' });
+      return;
+    }
+    for (const k in o) walk(o[k]);
+  })(JSON.parse(m[1]));
+  return out;
+}
+async function scrape(q) {
+  const r = await fetch('https://www.youtube.com/results?hl=en&gl=IN&sp=EgIQAQ%3D%3D&search_query=' + encodeURIComponent(q), {
+    headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      'accept-language': 'en-US,en;q=0.9', cookie: 'CONSENT=YES+1; SOCS=CAI' }
+  });
+  return parseResults(await r.text());
+}
 app.get('/search', async (req, res) => {
   const q = String(req.query.q || '').trim();
   if (!q) return res.json({ results: [] });
@@ -17,15 +40,16 @@ app.get('/search', async (req, res) => {
       return res.json({ results: [{ id, title, thumb: 'https://i.ytimg.com/vi/' + id + '/mqdefault.jpg' }] });
     }
     if (KEY) {
-      const u = 'https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=8&q=' + encodeURIComponent(q) + '&key=' + KEY;
-      const j = await (await fetch(u)).json();
-      if (j.error) return res.json({ results: [], error: 'YouTube API: ' + j.error.message });
-      return res.json({ results: (j.items || []).map(i => ({ id: i.id.videoId, title: dec(i.snippet.title), thumb: i.snippet.thumbnails.medium.url })) });
+      try {
+        const u = 'https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=8&q=' + encodeURIComponent(q) + '&key=' + KEY;
+        const j = await (await fetch(u)).json();
+        if (!j.error && j.items && j.items.length)
+          return res.json({ results: j.items.map(i => ({ id: i.id.videoId, title: dec(i.snippet.title), thumb: i.snippet.thumbnails.medium.url })) });
+      } catch (e) {}
     }
-    const r = await YT.search(q, { limit: 8, type: 'video' });
-    const results = r.map(v => ({ id: v.id, title: v.title, thumb: v.thumbnail && v.thumbnail.url }));
-    res.json({ results, error: results.length ? undefined : 'No results. Paste a YouTube link instead, or add a YT_API_KEY on the server.' });
-  } catch (e) { res.json({ results: [], error: 'Search failed: ' + (e.message || e) }); }
+    const results = await scrape(q);
+    res.json({ results, error: results.length ? undefined : 'No results found. Try different words or paste a YouTube link.' });
+  } catch (e) { res.json({ results: [], error: 'Search failed: ' + (e.message || e) + '. You can still paste a YouTube link.' }); }
 });
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
