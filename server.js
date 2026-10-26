@@ -2,12 +2,30 @@ const express = require('express'), http = require('http');
 const { WebSocketServer } = require('ws');
 const YT = require('youtube-sr').default;
 const app = express();
-app.use(express.static(__dirname + '/public'));
+app.use(express.static(__dirname ));
+const KEY = process.env.YT_API_KEY;
+const ID_RE = /(?:youtu\.be\/|[?&]v=|shorts\/|embed\/)([\w-]{11})/;
+const dec = s => String(s).replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 app.get('/search', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json({ results: [] });
   try {
-    const r = await YT.search(String(req.query.q || ''), { limit: 6, type: 'video' });
-    res.json(r.map(v => ({ id: v.id, title: v.title, thumb: v.thumbnail && v.thumbnail.url, dur: v.durationFormatted })));
-  } catch (e) { res.json([]); }
+    const m = q.match(ID_RE);
+    if (m) {
+      const id = m[1]; let title = 'YouTube video ' + id;
+      try { title = (await (await fetch('https://www.youtube.com/oembed?format=json&url=https://www.youtube.com/watch?v=' + id)).json()).title || title; } catch (e) {}
+      return res.json({ results: [{ id, title, thumb: 'https://i.ytimg.com/vi/' + id + '/mqdefault.jpg' }] });
+    }
+    if (KEY) {
+      const u = 'https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=8&q=' + encodeURIComponent(q) + '&key=' + KEY;
+      const j = await (await fetch(u)).json();
+      if (j.error) return res.json({ results: [], error: 'YouTube API: ' + j.error.message });
+      return res.json({ results: (j.items || []).map(i => ({ id: i.id.videoId, title: dec(i.snippet.title), thumb: i.snippet.thumbnails.medium.url })) });
+    }
+    const r = await YT.search(q, { limit: 8, type: 'video' });
+    const results = r.map(v => ({ id: v.id, title: v.title, thumb: v.thumbnail && v.thumbnail.url }));
+    res.json({ results, error: results.length ? undefined : 'No results. Paste a YouTube link instead, or add a YT_API_KEY on the server.' });
+  } catch (e) { res.json({ results: [], error: 'Search failed: ' + (e.message || e) }); }
 });
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
