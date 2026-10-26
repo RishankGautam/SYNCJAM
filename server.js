@@ -1,7 +1,7 @@
 const express = require('express'), http = require('http');
 const { WebSocketServer } = require('ws');
 const app = express();
-app.use(express.static(__dirname));
+app.use(express.static(__dirname + '/public'));
 const KEY = process.env.YT_API_KEY;
 const ID_RE = /(?:youtu\.be\/|[?&]v=|shorts\/|embed\/)([\w-]{11})/;
 const dec = s => String(s).replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
@@ -54,7 +54,7 @@ app.get('/search', async (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const rooms = {};
-const getRoom = n => rooms[n] || (rooms[n] = { queue: [], cur: null, startedAt: 0, paused: false, pausedPos: 0, users: new Set() });
+const getRoom = n => rooms[n] || (rooms[n] = { queue: [], cur: null, startedAt: 0, paused: false, pausedPos: 0, users: new Set(), chat: [] });
 const pos = r => r.paused ? r.pausedPos : (Date.now() - r.startedAt) / 1000;
 function bc(r) {
   const s = JSON.stringify({ type: 'state', now: Date.now(), queue: r.queue, cur: r.cur, startedAt: r.startedAt,
@@ -69,9 +69,18 @@ wss.on('connection', ws => {
     if (m.type === 'join') {
       r = getRoom(String(m.room || 'main').slice(0, 30));
       u = { ws, name: String(m.name || 'guest').slice(0, 20), id: Math.random().toString(36).slice(2, 10) };
-      r.users.add(u); ws.send(JSON.stringify({ type: 'welcome', id: u.id })); return bc(r);
+      r.users.add(u); ws.send(JSON.stringify({ type: 'welcome', id: u.id })); ws.send(JSON.stringify({ type: 'history', msgs: r.chat })); return bc(r);
     }
     if (!r) return;
+    if (m.type === 'chat') {
+      const text = String(m.text || '').trim().slice(0, 300);
+      if (!text) return;
+      const msg = { name: u.name, text, t: Date.now() };
+      r.chat.push(msg); if (r.chat.length > 50) r.chat.shift();
+      const s = JSON.stringify({ type: 'chat', msg });
+      r.users.forEach(x => x.ws.readyState === 1 && x.ws.send(s));
+      return;
+    }
     if (m.type === 'signal') {
       const t = [...r.users].find(x => x.id === m.to);
       if (t && t.ws.readyState === 1) t.ws.send(JSON.stringify({ type: 'signal', from: u.id, data: m.data }));
