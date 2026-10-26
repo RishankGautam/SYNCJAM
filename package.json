@@ -1,1 +1,1 @@
-{"name":"syncjam","version":"1.0.0","main":"server.js","scripts":{"start":"node server.js"},"dependencies":{"express":"^4.19.2","ws":"^8.18.0","youtube-sr":"^4.3.11"}}
+{"name":"syncjam","version":"1.0.0","main":"server.js","engines":{"node":">=18"},"scripts":{"start":"node server.js"},"dependencies":{"express":"^4.19.2","ws":"^8.18.0","youtube-sr":"^4.3.11"}}
