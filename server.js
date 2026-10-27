@@ -1,7 +1,7 @@
 const express = require('express'), http = require('http');
 const { WebSocketServer } = require('ws');
 const app = express();
-app.use(express.static(__dirname ));
+app.use(express.static(__dirname + '/public'));
 const KEY = process.env.YT_API_KEY;
 const ID_RE = /(?:youtu\.be\/|[?&]v=|shorts\/|embed\/)([\w-]{11})/;
 const dec = s => String(s).replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
@@ -53,8 +53,72 @@ app.get('/search', async (req, res) => {
 });
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
-const rooms = {};
-const getRoom = n => rooms[n] || (rooms[n] = { queue: [], cur: null, startedAt: 0, paused: false, pausedPos: 0, users: new Set(), chat: [] });
+const rooms = Object.create(null);
+const fs = require('fs');
+const FILE = __dirname + '/data.json';
+const RU = process.env.UPSTASH_REDIS_REST_URL, RT = process.env.UPSTASH_REDIS_REST_TOKEN;
+let DB = Object.create(null), canSave = true, saveT = null;
+async function redis(cmd) {
+  const r = await fetch(RU, { method: 'POST', headers: { Authorization: 'Bearer ' + RT }, body: JSON.stringify(cmd) });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  return j.result;
+}
+async function loadDB() {
+  for (let i = 0; i < 3; i++) {
+    try {
+      let raw = null;
+      if (RU && RT) raw = await redis(['GET', 'syncjam:db']);
+      else if (fs.existsSync(FILE)) raw = fs.readFileSync(FILE, 'utf8');
+      DB = Object.assign(Object.create(null), raw ? JSON.parse(raw) : {});
+      console.log('Playlists loaded from ' + (RU && RT ? 'Upstash' : 'local file'));
+      return;
+    } catch (e) { console.log('Load failed:', e.message); await new Promise(r => setTimeout(r, 1000)); }
+  }
+  if (RU && RT) { canSave = false; console.log('Could not load playlists. Saving disabled to protect old data.'); }
+}
+async function writeDB() {
+  const s = JSON.stringify(DB);
+  if (RU && RT) await redis(['SET', 'syncjam:db', s]); else fs.writeFileSync(FILE, s);
+}
+function saveDB() {
+  if (!canSave) return;
+  clearTimeout(saveT);
+  saveT = setTimeout(() => { saveT = null; writeDB().catch(e => console.log('Save failed:', e.message)); }, 800);
+}
+process.on('SIGTERM', async () => {
+  if (saveT && canSave) { clearTimeout(saveT); try { await writeDB(); } catch (e) {} }
+  process.exit(0);
+});
+const rid = () => Math.random().toString(36).slice(2, 10);
+const VID = /^[\w-]{11}$/;
+function sendPl(ws, r) { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'playlists', list: DB[r.name] || [] })); }
+function pushPl(r) { saveDB(); r.users.forEach(x => sendPl(x.ws, r)); }
+function handlePl(r, u, m) {
+  const list = DB[r.name] || (DB[r.name] = []);
+  if (m.type === 'pl_create') {
+    const name = String(m.name || '').trim().slice(0, 40);
+    if (!name || list.length >= 20) return;
+    list.push({ id: rid(), name, owner: u.name, songs: [] });
+    return pushPl(r);
+  }
+  const p = list.find(x => x.id === m.pid);
+  if (!p) return;
+  if (m.type === 'pl_add') {
+    const v = m.video || {};
+    if (!VID.test(String(v.id)) || p.songs.length >= 100 || p.songs.some(s => s.id === v.id)) return;
+    p.songs.push({ id: v.id, title: String(v.title || 'YouTube video').slice(0, 200), thumb: 'https://i.ytimg.com/vi/' + v.id + '/mqdefault.jpg' });
+    return pushPl(r);
+  }
+  if (m.type === 'pl_remove') { p.songs = p.songs.filter(s => s.id !== m.vid); return pushPl(r); }
+  if (m.type === 'pl_delete') { if (p.owner !== u.name) return; DB[r.name] = list.filter(x => x !== p); return pushPl(r); }
+  if (m.type === 'pl_play' && p.songs.length) { r.queue = p.songs.map(s => ({ ...s })); next(r); return bc(r); }
+  if (m.type === 'pl_queue') {
+    const s = p.songs.find(x => x.id === m.vid);
+    if (s) { r.queue.push({ ...s }); if (!r.cur) next(r); bc(r); }
+  }
+}
+const getRoom = n => rooms[n] || (rooms[n] = { name: n, queue: [], cur: null, startedAt: 0, paused: false, pausedPos: 0, users: new Set(), chat: [] });
 const pos = r => r.paused ? r.pausedPos : (Date.now() - r.startedAt) / 1000;
 function bc(r) {
   const s = JSON.stringify({ type: 'state', now: Date.now(), queue: r.queue, cur: r.cur, startedAt: r.startedAt,
@@ -69,9 +133,10 @@ wss.on('connection', ws => {
     if (m.type === 'join') {
       r = getRoom(String(m.room || 'main').slice(0, 30));
       u = { ws, name: String(m.name || 'guest').slice(0, 20), id: Math.random().toString(36).slice(2, 10) };
-      r.users.add(u); ws.send(JSON.stringify({ type: 'welcome', id: u.id })); ws.send(JSON.stringify({ type: 'history', msgs: r.chat })); return bc(r);
+      r.users.add(u); ws.send(JSON.stringify({ type: 'welcome', id: u.id })); ws.send(JSON.stringify({ type: 'history', msgs: r.chat })); sendPl(ws, r); return bc(r);
     }
     if (!r) return;
+    if (typeof m.type === 'string' && m.type.startsWith('pl_')) return handlePl(r, u, m);
     if (m.type === 'chat') {
       const text = String(m.text || '').trim().slice(0, 300);
       if (!text) return;
@@ -97,4 +162,4 @@ wss.on('connection', ws => {
   });
   ws.on('close', () => { if (r && u) { r.users.delete(u); r.users.size ? bc(r) : delete rooms[Object.keys(rooms).find(k => rooms[k] === r)]; } });
 });
-server.listen(process.env.PORT || 3000, () => console.log('SyncJam running'));
+loadDB().then(() => server.listen(process.env.PORT || 3000, () => console.log('SyncJam running')));
