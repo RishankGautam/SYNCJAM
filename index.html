@@ -31,6 +31,19 @@ html{background:#02060e}body{background:transparent}
 @media(prefers-reduced-motion:reduce){.wave,.sp{animation:none}}
 .card{background:rgba(7,18,30,.88)}#chat{background:rgba(5,14,24,.9)}
 input{background:rgba(9,22,34,.94)}button.s{background:rgba(18,40,48,.92)}
+
+.side{display:flex;flex-direction:column;gap:12px;min-width:0}
+#chat{height:420px!important;position:static!important}
+#pls{background:rgba(5,14,24,.9);border-radius:12px;padding:10px 12px;max-height:300px;overflow-y:auto}
+#pls .ph{display:flex;justify-content:space-between;align-items:center}#pls h3{margin:0;font-size:15px}
+#plform{margin:8px 0 0;gap:6px}#plform input{flex:1;min-width:0}
+.pl{border-radius:10px;margin-top:8px;background:rgba(14,30,40,.75)}
+.plh{display:flex;align-items:center;gap:8px;padding:8px;cursor:pointer}
+.av{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex:none}
+.pln{flex:1;min-width:0;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pln small{display:block;color:#6ee7b7;font-size:11px}
+.psongs{padding:0 8px 8px}.ps{display:flex;gap:6px;align-items:center;font-size:13px;padding:4px 0}
+.ps span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.ps span:hover{color:#6ee7b7}
+select{padding:10px;border-radius:10px;border:0;background:rgba(9,22,34,.94);color:#fff;flex:1;min-width:0}
 </style></head><body><div id="bg"><i class="sp s1"></i><i class="sp s2"></i><i class="sp s3"></i><svg class="wave w3" viewBox="0 0 2400 200" preserveAspectRatio="none"><path fill="#0f766e" fill-opacity=".20" d="M0,100 C200,40 400,40 600,100 S1000,160 1200,100 S1600,40 1800,100 S2200,160 2400,100 V200 H0 Z"/></svg><svg class="wave w2" viewBox="0 0 2400 200" preserveAspectRatio="none"><path fill="#1e3a8a" fill-opacity=".40" d="M0,100 C200,40 400,40 600,100 S1000,160 1200,100 S1600,40 1800,100 S2200,160 2400,100 V200 H0 Z"/></svg><svg class="wave w1" viewBox="0 0 2400 200" preserveAspectRatio="none"><path fill="#065f46" fill-opacity=".38" d="M0,100 C200,40 400,40 600,100 S1000,160 1200,100 S1600,40 1800,100 S2200,160 2400,100 V200 H0 Z"/></svg></div>
 <div id="join"><h1>🎧 SyncJam</h1>
 <input id="name" placeholder="Your name"><input id="room" placeholder="Room name (share with friends)" value="main">
@@ -43,7 +56,7 @@ input{background:rgba(9,22,34,.94)}button.s{background:rgba(18,40,48,.92)}
 <div class="row" style="align-items:center;flex-wrap:wrap"><button class="s" id="pp" onclick="toggle()">⏯</button><button class="s" onclick="send({type:'skip'})">⏭ Skip</button>
 <button class="s" onclick="navigator.clipboard.writeText(location.origin+'/?room='+room);this.textContent='Copied!'">🔗 Invite link</button><span>🔊</span><input type="range" id="vol" min="0" max="100" value="80" style="width:110px;padding:0;accent-color:#0e9f6e"></div>
 <div class="row"><input id="q" placeholder="Search a song or paste a YouTube link" onkeydown="if(event.key==='Enter')search()"><button onclick="search()">Search</button></div>
-<div id="results"></div><h3>Queue</h3><div id="queue"></div></div><aside id="chat"><h3 style="display:flex;justify-content:space-between;align-items:center">💬 Chat <button class="s" id="snd" onclick="toggleSnd()" title="Message sound" style="padding:4px 10px">🔔</button></h3><div id="msgs"></div><div id="cbox"><input id="cin" maxlength="300" placeholder="Message everyone…" onkeydown="if(event.key==='Enter')sendChat()"><button onclick="sendChat()">Send</button></div></aside></div></div>
+<div id="results"></div><h3>Queue</h3><div id="queue"></div></div><div class="side"><section id="pls"><div class="ph"><h3>🎶 Playlists</h3><button class="s" onclick="togglePlForm()">＋ New</button></div><div class="row" id="plform" style="display:none"><input id="plname" maxlength="40" placeholder="Playlist name" onkeydown="if(event.key==='Enter')createPl()"><button onclick="createPl()">Save</button></div><div id="pllist"></div></section><aside id="chat"><h3 style="display:flex;justify-content:space-between;align-items:center">💬 Chat <button class="s" id="snd" onclick="toggleSnd()" title="Message sound" style="padding:4px 10px">🔔</button></h3><div id="msgs"></div><div id="cbox"><input id="cin" maxlength="300" placeholder="Message everyone…" onkeydown="if(event.key==='Enter')sendChat()"><button onclick="sendChat()">Send</button></div></aside></div></div></div>
 <script>
 let ws,player,ready=false,S=null,off=0,room,curId=null;
 const $=id=>document.getElementById(id);
@@ -55,7 +68,7 @@ function onYouTubeIframeAPIReady(){if(player)return;player=new YT.Player('player
 function go(){room=$('room').value.trim()||'main';$('join').style.display='none';$('app').style.display='block';
  ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
  ws.onopen=()=>send({type:'join',room,name:$('name').value||'guest'});
- ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='state'){S=m;off=m.now-Date.now();render();apply()}else if(m.type==='history'){$('msgs').innerHTML='';m.msgs.forEach(addMsg);$('msgs').scrollTop=1e9}else if(m.type==='chat'){addMsg(m.msg);if(m.msg.name!==($('name').value||'guest'))ping()}};
+ ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='state'){S=m;off=m.now-Date.now();render();apply()}else if(m.type==='history'){$('msgs').innerHTML='';m.msgs.forEach(addMsg);$('msgs').scrollTop=1e9}else if(m.type==='chat'){addMsg(m.msg);if(m.msg.name!==($('name').value||'guest'))ping()}else if(m.type==='playlists')onPl(m.list)};
  ws.onclose=()=>setTimeout(()=>location.reload(),2000)}
 function target(){return S.paused?S.pausedPos:(Date.now()+off-S.startedAt)/1000}
 function apply(){if(!ready||!S)return;
@@ -86,7 +99,7 @@ async function search(){const q=$('q').value.trim();if(!q)return;
   if(!r.length){$('results').innerHTML='<p class="muted">'+esc(j.error||'No results')+'</p>';return}}
  catch(e){$('results').innerHTML='<p class="muted">Search failed, try again</p>';return}
  window.R=r;
- $('results').innerHTML=r.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+' <span class="muted">'+(v.dur||'')+'</span></div><button class="s" onclick="add('+i+')">+ Add</button></div>').join('')}
+ $('results').innerHTML=selHtml()+r.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+' <span class="muted">'+(v.dur||'')+'</span></div><button class="s" onclick="add('+i+')">▶ Queue</button><button class="s" onclick="addPl('+i+',this)">＋ Playlist</button></div>').join('')}
 function add(i){send({type:'add',video:window.R[i]});$('results').innerHTML='';$('q').value=''}
 function addMsg(m){const box=$('msgs');const near=box.scrollHeight-box.scrollTop-box.clientHeight<80;
  const mine=m.name===($('name').value||'guest');const d=document.createElement('div');d.className='m'+(mine?' me':'');
@@ -104,6 +117,34 @@ function ping(){if(!snd)return;try{ac=ac||new (window.AudioContext||window.webki
 function toggleSnd(){snd=!snd;try{localStorage.setItem('snd',snd?'1':'0')}catch(e){}$('snd').textContent=snd?'🔔':'🔕';if(snd)ping()}
 (function(){document.querySelectorAll('.sp').forEach(function(el){var s=[];for(var k=0;k<16;k++){s.push(Math.round(Math.random()*100)+'vw '+Math.round(Math.random()*100)+'vh 0 '+(Math.random()<.3?1:0)+'px rgba(170,235,215,.9)')}el.style.boxShadow=s.join(',')});
 document.addEventListener('visibilitychange',function(){document.getElementById('bg').classList.toggle('off',document.hidden)})})();
+let PL=[],openPl={},selPl=null,wantNew=null;
+const meName=()=>($('name').value||'guest').slice(0,20);
+const hue=n=>([...n].reduce((a,c)=>a+c.charCodeAt(0),0)*37)%360;
+function togglePlForm(){const f=$('plform');const show=f.style.display==='none';f.style.display=show?'flex':'none';if(show)$('plname').focus()}
+function createPl(){const n=$('plname').value.trim();if(!n)return;wantNew=n;send({type:'pl_create',name:n});$('plname').value='';$('plform').style.display='none'}
+function optHtml(){return PL.map(p=>'<option value="'+p.id+'"'+(p.id===selPl?' selected':'')+'>'+esc(p.name)+'</option>').join('')}
+function selHtml(){if(!PL.some(p=>p.id===selPl))selPl=PL[0]&&PL[0].id;
+ return PL.length?'<div class="row" style="align-items:center"><span class="muted">Save to:</span><select id="plsel" onchange="selPl=this.value">'+optHtml()+'</select></div>':'<p class="muted">Tip: tap ＋ New in Playlists to save songs.</p>'}
+function addPl(i,btn){if(!PL.length){alert('Create a playlist first: tap ＋ New in the Playlists box');return}
+ send({type:'pl_add',pid:selPl,video:window.R[i]});btn.textContent='✓ Added';btn.disabled=true}
+function onPl(list){PL=list||[];
+ if(wantNew){const me=meName();const p=[...PL].reverse().find(x=>x.name===wantNew&&x.owner===me);if(p){selPl=p.id;openPl[p.id]=true;wantNew=null}}
+ renderPl()}
+function renderPl(){const me=meName();
+ $('pllist').innerHTML=PL.length?PL.map(p=>{const o=openPl[p.id];
+  return '<div class="pl"><div class="plh" data-a="tog" data-p="'+p.id+'"><div class="av" style="background:hsl('+hue(p.owner)+',55%,32%)" title="'+esc(p.owner)+'">'+esc(p.owner.charAt(0).toUpperCase())+'</div>'
+  +'<div class="pln">'+esc(p.name)+'<small>by '+esc(p.owner)+' · '+p.songs.length+' songs</small></div>'
+  +'<button class="s" title="Play whole playlist" data-a="play" data-p="'+p.id+'">▶ Play</button><span>'+(o?'▾':'▸')+'</span></div>'
+  +(o?'<div class="psongs">'+(p.songs.length?p.songs.map(v=>'<div class="ps"><span title="Add to queue" data-a="q" data-p="'+p.id+'" data-v="'+v.id+'">'+esc(v.title)+'</span><button class="s" title="Remove" data-a="rm" data-p="'+p.id+'" data-v="'+v.id+'">✕</button></div>').join(''):'<div class="muted">Empty. Search a song and tap ＋ Playlist.</div>')
+   +(p.owner===me?'<button class="s" style="margin-top:6px" data-a="del" data-p="'+p.id+'">🗑 Delete playlist</button>':'')+'</div>':'')+'</div>'}).join(''):'<p class="muted">No playlists yet. Tap ＋ New.</p>';
+ const s=$('plsel');if(s){if(!PL.some(p=>p.id===selPl))selPl=PL[0]&&PL[0].id;s.innerHTML=optHtml()}}
+$('pllist').addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b)return;const a=b.dataset.a,pid=b.dataset.p,vid=b.dataset.v;
+ if(a==='tog'){openPl[pid]=!openPl[pid];renderPl()}
+ else if(a==='play')send({type:'pl_play',pid})
+ else if(a==='q')send({type:'pl_queue',pid,vid})
+ else if(a==='rm')send({type:'pl_remove',pid,vid})
+ else if(a==='del'){if(confirm('Delete this playlist?'))send({type:'pl_delete',pid})}});
+renderPl();
 let bad=0;
 function tapPlay(){try{player.unMute();player.setVolume(vol);player.playVideo()}catch(e){}$('tap').style.display='none';bad=0}
 setInterval(()=>{
