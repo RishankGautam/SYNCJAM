@@ -1,7 +1,7 @@
 const express = require('express'), http = require('http');
 const { WebSocketServer } = require('ws');
 const app = express();
-app.use(express.static(__dirname ));
+app.use(express.static(__dirname + '/public'));
 const KEY = process.env.YT_API_KEY;
 const ID_RE = /(?:youtu\.be\/|[?&]v=|shorts\/|embed\/)([\w-]{11})/;
 const dec = s => String(s).replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
@@ -53,6 +53,7 @@ app.get('/search', async (req, res) => {
 });
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
+setInterval(() => wss.clients.forEach(c => c.readyState === 1 && c.ping()), 25000);
 const rooms = Object.create(null);
 const getRoom = n => rooms[n] || (rooms[n] = { queue: [], cur: null, startedAt: 0, paused: false, pausedPos: 0, users: new Set(), chat: [] });
 const pos = r => r.paused ? r.pausedPos : (Date.now() - r.startedAt) / 1000;
@@ -68,7 +69,9 @@ wss.on('connection', ws => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (m.type === 'join') {
       r = getRoom(String(m.room || 'main').slice(0, 30));
-      u = { ws, name: String(m.name || 'guest').slice(0, 20), id: Math.random().toString(36).slice(2, 10) };
+      const sid = String(m.sid || '').slice(0, 40);
+      if (sid) for (const x of [...r.users]) if (x.sid === sid) { r.users.delete(x); try { x.ws.close(4000, 'replaced'); } catch (e) {} }
+      u = { ws, sid, name: String(m.name || 'guest').slice(0, 20), id: Math.random().toString(36).slice(2, 10) };
       r.users.add(u); ws.send(JSON.stringify({ type: 'welcome', id: u.id })); ws.send(JSON.stringify({ type: 'history', msgs: r.chat })); return bc(r);
     }
     if (!r) return;
