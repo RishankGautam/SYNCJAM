@@ -1,7 +1,7 @@
 const express = require('express'), http = require('http');
 const { WebSocketServer } = require('ws');
 const app = express();
-app.use(express.static(__dirname));
+app.use(express.static(__dirname + '/public'));
 const KEY = process.env.YT_API_KEY;
 const ID_RE = /(?:youtu\.be\/|[?&]v=|shorts\/|embed\/)([\w-]{11})/;
 const dec = s => String(s).replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
@@ -55,8 +55,12 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 setInterval(() => wss.clients.forEach(c => c.readyState === 1 && c.ping()), 25000);
 const rooms = Object.create(null);
-const getRoom = n => rooms[n] || (rooms[n] = { queue: [], cur: null, startedAt: 0, paused: false, pausedPos: 0, users: new Set(), chat: [] });
+const getRoom = n => rooms[n] || (rooms[n] = { queue: [], cur: null, startedAt: 0, paused: false, pausedPos: 0, users: new Set(), chat: [], pend: Object.create(null) });
 const pos = r => r.paused ? r.pausedPos : (Date.now() - r.startedAt) / 1000;
+function presence(r, kind, name, except) {
+  const s = JSON.stringify({ type: 'presence', kind, name });
+  r.users.forEach(x => x !== except && x.ws.readyState === 1 && x.ws.send(s));
+}
 function bc(r) {
   const s = JSON.stringify({ type: 'state', now: Date.now(), queue: r.queue, cur: r.cur, startedAt: r.startedAt,
     paused: r.paused, pausedPos: r.pausedPos, users: [...r.users].map(u => ({ id: u.id, name: u.name })) });
@@ -70,9 +74,13 @@ wss.on('connection', ws => {
     if (m.type === 'join') {
       r = getRoom(String(m.room || 'main').slice(0, 30));
       const sid = String(m.sid || '').slice(0, 40);
-      if (sid) for (const x of [...r.users]) if (x.sid === sid) { r.users.delete(x); try { x.ws.close(4000, 'replaced'); } catch (e) {} }
+      let returning = false;
+      if (sid) {
+        for (const x of [...r.users]) if (x.sid === sid) { r.users.delete(x); returning = true; try { x.ws.close(4000, 'replaced'); } catch (e) {} }
+        if (r.pend[sid]) { clearTimeout(r.pend[sid]); delete r.pend[sid]; returning = true; }
+      }
       u = { ws, sid, name: String(m.name || 'guest').slice(0, 20), id: Math.random().toString(36).slice(2, 10) };
-      r.users.add(u); ws.send(JSON.stringify({ type: 'welcome', id: u.id })); ws.send(JSON.stringify({ type: 'history', msgs: r.chat })); return bc(r);
+      r.users.add(u); if (!returning) presence(r, 'join', u.name, u); ws.send(JSON.stringify({ type: 'welcome', id: u.id })); ws.send(JSON.stringify({ type: 'history', msgs: r.chat })); return bc(r);
     }
     if (!r) return;
     if (m.type === 'chat') {
@@ -98,6 +106,6 @@ wss.on('connection', ws => {
     else if (m.type === 'remove') r.queue.splice(m.index, 1);
     bc(r);
   });
-  ws.on('close', () => { if (r && u) { r.users.delete(u); r.users.size ? bc(r) : delete rooms[Object.keys(rooms).find(k => rooms[k] === r)]; } });
+  ws.on('close', () => { if (r && u) { if (r.users.delete(u)) { const key = u.sid || u.id, rm = r; clearTimeout(rm.pend[key]); rm.pend[key] = setTimeout(() => { delete rm.pend[key]; presence(rm, 'leave', u.name, null); }, 3000); } r.users.size ? bc(r) : delete rooms[Object.keys(rooms).find(k => rooms[k] === r)]; } });
 });
 server.listen(process.env.PORT || 3000, () => console.log('SyncJam running'));
