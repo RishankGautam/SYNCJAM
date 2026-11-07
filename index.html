@@ -1,5 +1,5 @@
 <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SyncJam</title>
+<title>SyncJam</title><link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#050f24"><link rel="apple-touch-icon" href="/icon-192.png"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <style>
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#0f0f14;color:#eee}
 .wrap{max-width:720px;margin:0 auto;padding:16px}h1{margin:8px 0}
@@ -42,22 +42,28 @@ input{background:rgba(9,22,34,.94)}button.s{background:rgba(18,40,48,.92)}
 <div style="position:relative"><div id="player"></div><button id="tap" onclick="tapPlay()" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:16px 28px;font-size:18px">▶ Tap to play</button></div><div id="status" class="muted"></div>
 <div class="row" style="align-items:center"><span id="cur" class="muted">0:00</span><input type="range" id="seek" min="0" max="100" value="0" step="1"><span id="dur" class="muted">0:00</span></div>
 <div class="row" style="align-items:center;flex-wrap:wrap"><button class="s" id="pp" onclick="toggle()">⏯</button><button class="s" onclick="send({type:'skip'})">⏭ Skip</button>
-<button class="s" onclick="navigator.clipboard.writeText(location.origin+'/?room='+room);this.textContent='Copied!'">🔗 Invite link</button><span>🔊</span><input type="range" id="vol" min="0" max="100" value="80" style="width:110px;padding:0;accent-color:#0e9f6e"></div>
+<button class="s" onclick="navigator.clipboard.writeText(location.origin+'/?room='+room);this.textContent='Copied!'">🔗 Invite link</button><span>🔊</span><input type="range" id="vol" min="0" max="100" value="80" style="width:110px;padding:0;accent-color:#0e9f6e"><button class="s" onclick="leave()" title="Forget my name on this device">🚪 Leave</button></div>
 <div class="row"><input id="q" placeholder="Search a song or paste a YouTube link" onkeydown="if(event.key==='Enter')search()"><button onclick="search()">Search</button></div>
 <div id="results"></div><h3>Queue</h3><div id="queue"></div></div><aside id="chat"><h3 style="display:flex;justify-content:space-between;align-items:center">💬 Chat <button class="s" id="snd" onclick="toggleSnd()" title="Message sound" style="padding:4px 10px">🔔</button></h3><div id="msgs"></div><div id="cbox"><input id="cin" maxlength="300" placeholder="Message everyone…" onkeydown="if(event.key==='Enter')sendChat()"><button onclick="sendChat()">Send</button></div></aside></div></div>
 <script>
 let ws,player,ready=false,S=null,off=0,room,curId=null;
 const $=id=>document.getElementById(id);
 $('room').value=new URLSearchParams(location.search).get('room')||'main';
-function send(o){ws.send(JSON.stringify(o))}
+function send(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))}
 function onYouTubeIframeAPIReady(){if(player)return;player=new YT.Player('player',{width:'100%',height:'100%',playerVars:{playsinline:1,rel:0,controls:0,disablekb:1},
  events:{onReady:()=>{ready=true;player.setVolume(vol);apply()},onStateChange:e=>{if(e.data===0&&S&&S.cur)send({type:'ended',id:S.cur.id})},
  onError:()=>{S&&S.cur&&send({type:'ended',id:S.cur.id})}}})}
+let sid,replaced=false;
+try{sid=localStorage.getItem('sj_sid');if(!sid){sid=Math.random().toString(36).slice(2)+Date.now().toString(36);localStorage.setItem('sj_sid',sid)}}catch(e){sid=Math.random().toString(36).slice(2)}
 function go(){room=$('room').value.trim()||'main';$('join').style.display='none';$('app').style.display='block';
+ try{localStorage.setItem('sj_name',$('name').value||'guest');localStorage.setItem('sj_room',room)}catch(e){}
+ startKA();connect()}
+function connect(){if(replaced||(ws&&ws.readyState<=1))return;
  ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
- ws.onopen=()=>send({type:'join',room,name:$('name').value||'guest'});
- ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='state'){S=m;off=m.now-Date.now();render();apply()}else if(m.type==='history'){$('msgs').innerHTML='';m.msgs.forEach(addMsg);$('msgs').scrollTop=1e9}else if(m.type==='chat'){addMsg(m.msg);if(m.msg.name!==($('name').value||'guest'))ping()}};
- ws.onclose=()=>setTimeout(()=>location.reload(),2000)}
+ ws.onopen=()=>send({type:'join',room,name:$('name').value||'guest',sid});
+ ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='state'){S=m;off=m.now-Date.now();render();apply();setMedia()}else if(m.type==='history'){$('msgs').innerHTML='';m.msgs.forEach(addMsg);$('msgs').scrollTop=1e9}else if(m.type==='chat'){addMsg(m.msg);if(m.msg.name!==($('name').value||'guest'))ping()}};
+ ws.onclose=e=>{if(e.code===4000){replaced=true;$('status').innerHTML='Opened in another tab. <a href="" style="color:#6ee7b7">Use this tab</a>';return}setTimeout(connect,2000)}}
+function leave(){try{localStorage.removeItem('sj_name');localStorage.removeItem('sj_room')}catch(e){}location.href=location.pathname}
 function target(){return S.paused?S.pausedPos:(Date.now()+off-S.startedAt)/1000}
 function apply(){if(!ready||!S)return;
  if(!S.cur){player.stopVideo();curId=null;return}
@@ -105,9 +111,29 @@ function ping(){if(!snd)return;try{ac=ac||new (window.AudioContext||window.webki
 function toggleSnd(){snd=!snd;try{localStorage.setItem('snd',snd?'1':'0')}catch(e){}$('snd').textContent=snd?'🔔':'🔕';if(snd)ping()}
 (function(){document.querySelectorAll('.sp').forEach(function(el){var s=[];for(var k=0;k<16;k++){s.push(Math.round(Math.random()*100)+'vw '+Math.round(Math.random()*100)+'vh 0 '+(Math.random()<.3?1:0)+'px rgba(170,235,215,.9)')}el.style.boxShadow=s.join(',')});
 document.addEventListener('visibilitychange',function(){document.getElementById('bg').classList.toggle('off',document.hidden)})})();
+let ka=null,metaId=null;
+function mkSilence(){const sr=8000,n=sr*10,b=new Uint8Array(44+n),dv=new DataView(b.buffer);
+ const w=(o,s)=>{for(let i=0;i<s.length;i++)b[o+i]=s.charCodeAt(i)};
+ w(0,'RIFF');dv.setUint32(4,36+n,true);w(8,'WAVEfmt ');dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);
+ dv.setUint32(24,sr,true);dv.setUint32(28,sr,true);dv.setUint16(32,1,true);dv.setUint16(34,8,true);w(36,'data');dv.setUint32(40,n,true);
+ for(let i=0;i<n;i++)b[44+i]=(Math.floor(i/sr)%2)?129:128;
+ return URL.createObjectURL(new Blob([b],{type:'audio/wav'}))}
+function startKA(){try{if(!ka){ka=new Audio();ka.loop=true;ka.volume=0.05;ka.src=mkSilence()}if(ka.paused){const p=ka.play();if(p&&p.catch)p.catch(()=>{})}}catch(e){}}
+function stopKA(){try{if(ka&&!ka.paused)ka.pause()}catch(e){}}
+function setMedia(){
+ if(S&&S.cur)startKA();else stopKA();
+ if(!('mediaSession' in navigator))return;const ms=navigator.mediaSession;
+ if(!S||!S.cur){try{ms.metadata=null;ms.playbackState='none'}catch(e){}metaId=null;return}
+ if(metaId!==S.cur.id){metaId=S.cur.id;try{ms.metadata=new MediaMetadata({title:S.cur.title,artist:'SyncJam',artwork:[{src:'https://i.ytimg.com/vi/'+S.cur.id+'/mqdefault.jpg',sizes:'320x180',type:'image/jpeg'}]})}catch(e){}}
+ try{ms.playbackState=S.paused?'paused':'playing'}catch(e){}}
+try{const ms=navigator.mediaSession;ms.setActionHandler('play',()=>{startKA();send({type:'resume'})});ms.setActionHandler('pause',()=>send({type:'pause'}));ms.setActionHandler('nexttrack',()=>send({type:'skip'}))}catch(e){}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(ws&&ws.readyState>1)connect();apply();setMedia()}});
+addEventListener('online',()=>{if(ws&&ws.readyState>1)connect()});
+addEventListener('pointerdown',()=>{if(S&&S.cur)startKA()});
 let bad=0;
 function tapPlay(){try{player.unMute();player.setVolume(vol);player.playVideo()}catch(e){}$('tap').style.display='none';bad=0}
 setInterval(()=>{
+ if(replaced)return;
  if(!ready){$('status').textContent='Loading player… (if stuck: refresh, or turn off adblock)';return}
  if(!S||!S.cur){$('status').textContent='Add a song to start';$('tap').style.display='none';return}
  $('status').textContent='';
@@ -116,4 +142,6 @@ setInterval(()=>{
 },1000);
 if(window.YT&&YT.Player)onYouTubeIframeAPIReady();
 else{const t=document.createElement('script');t.src='https://www.youtube.com/iframe_api';document.head.appendChild(t)}
+try{const n=localStorage.getItem('sj_name');if(n){$('name').value=n;if(!new URLSearchParams(location.search).get('room')){const r=localStorage.getItem('sj_room');if(r)$('room').value=r}go()}}catch(e){}
+if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 </script></body></html>
