@@ -42,6 +42,125 @@ input{background:rgba(9,22,34,.94)}button.s{background:rgba(18,40,48,.92)}
 <div style="position:relative"><div id="player"></div><button id="tap" onclick="tapPlay()" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:16px 28px;font-size:18px">▶ Tap to play</button></div><div id="status" class="muted"></div>
 <div class="row" style="align-items:center"><span id="cur" class="muted">0:00</span><input type="range" id="seek" min="0" max="100" value="0" step="1"><span id="dur" class="muted">0:00</span></div>
 <div class="row" style="align-items:center;flex-wrap:wrap"><button class="s" id="pp" onclick="toggle()">⏯</button><button class="s" onclick="send({type:'skip'})">⏭ Skip</button>
+<button class="s" onclick="navigator.clipboard.writeText(location.origin+'/?room='+room);this.textContent='Copied!'">🔗 Invite link</button><span>🔊</span><input type="range" id="vol" min="0" max="100" value="80" style="width:110px;padding:0;accent-color:#0e9f6e"></div>
+<div class="row"><input id="q" placeholder="Search a song or paste a YouTube link" onkeydown="if(event.key==='Enter')search()"><button onclick="search()">Search</button></div>
+<div id="results"></div><h3>Queue</h3><div id="queue"></div></div><aside id="chat"><h3 style="display:flex;justify-content:space-between;align-items:center">💬 Chat <button class="s" id="snd" onclick="toggleSnd()" title="Message sound" style="padding:4px 10px">🔔</button></h3><div id="msgs"></div><div id="cbox"><input id="cin" maxlength="300" placeholder="Message everyone…" onkeydown="if(event.key==='Enter')sendChat()"><button onclick="sendChat()">Send</button></div></aside></div></div>
+<script>
+let ws,player,ready=false,S=null,off=0,room,curId=null;
+const $=id=>document.getElementById(id);
+$('room').value=new URLSearchParams(location.search).get('room')||'main';
+function send(o){ws.send(JSON.stringify(o))}
+function onYouTubeIframeAPIReady(){if(player)return;player=new YT.Player('player',{width:'100%',height:'100%',playerVars:{playsinline:1,rel:0,controls:0,disablekb:1},
+ events:{onReady:()=>{ready=true;player.setVolume(vol);apply()},onStateChange:e=>{if(e.data===0&&S&&S.cur)send({type:'ended',id:S.cur.id})},
+ onError:()=>{S&&S.cur&&send({type:'ended',id:S.cur.id})}}})}
+function go(){room=$('room').value.trim()||'main';$('join').style.display='none';$('app').style.display='block';
+ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
+ ws.onopen=()=>send({type:'join',room,name:$('name').value||'guest'});
+ ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='state'){S=m;off=m.now-Date.now();render();apply()}else if(m.type==='history'){$('msgs').innerHTML='';m.msgs.forEach(addMsg);$('msgs').scrollTop=1e9}else if(m.type==='chat'){addMsg(m.msg);if(m.msg.name!==($('name').value||'guest'))ping()}};
+ ws.onclose=()=>setTimeout(()=>location.reload(),2000)}
+function target(){return S.paused?S.pausedPos:(Date.now()+off-S.startedAt)/1000}
+function apply(){if(!ready||!S)return;
+ if(!S.cur){player.stopVideo();curId=null;return}
+ const t=Math.max(0,target());
+ if(curId!==S.cur.id){curId=S.cur.id;player.loadVideoById(S.cur.id,t);player.setVolume(vol);if(S.paused)setTimeout(()=>player.pauseVideo(),500);return}
+ const ps=player.getPlayerState();
+ if(S.paused){if(ps!==2)player.pauseVideo();if(Math.abs(player.getCurrentTime()-t)>1)player.seekTo(t,true)}
+ else{if(ps===2||ps===5||ps===-1)player.playVideo();if(Math.abs(player.getCurrentTime()-t)>2)player.seekTo(t,true)}}
+setInterval(apply,4000);
+let vol=80;try{vol=+localStorage.getItem('vol')||80}catch(e){}
+$('vol').value=vol;
+$('vol').addEventListener('input',()=>{vol=+$('vol').value;if(ready)player.setVolume(vol);try{localStorage.setItem('vol',vol)}catch(e){}});
+let drag=false;
+const fmt=t=>{t=Math.floor(t||0);return Math.floor(t/60)+':'+String(t%60).padStart(2,'0')};
+setInterval(()=>{if(!ready||!S||!S.cur||drag)return;const d=player.getDuration()||0,c=player.getCurrentTime()||0;
+ if(!d)return;$('seek').max=d;$('seek').value=c;$('cur').textContent=fmt(c);$('dur').textContent=fmt(d)},500);
+$('seek').addEventListener('input',()=>{drag=true;$('cur').textContent=fmt($('seek').value)});
+$('seek').addEventListener('change',()=>{drag=false;send({type:'seek',pos:+$('seek').value})});
+function toggle(){if(!S||!S.cur)return;send({type:S.paused?'resume':'pause'})}
+function render(){$('users').textContent='· 👥 '+S.users.map(u=>u.name||u).join(', ');$('pp').textContent=S.paused?'▶ Play':'⏸ Pause';
+ $('queue').innerHTML=(S.cur?'<div class="card"><div class="t">▶ '+esc(S.cur.title)+'</div></div>':'')+
+ S.queue.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+'</div><button class="s" onclick="send({type:\'remove\',index:'+i+'})">✕</button></div>').join('')||'<p class="muted">Nothing queued</p>'}
+function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+async function search(){const q=$('q').value.trim();if(!q)return;
+ $('results').innerHTML='<p class="muted">Searching…</p>';
+ let r=[];try{const j=await (await fetch('/search?q='+encodeURIComponent(q))).json();r=j.results||[];
+  if(!r.length){$('results').innerHTML='<p class="muted">'+esc(j.error||'No results')+'</p>';return}}
+ catch(e){$('results').innerHTML='<p class="muted">Search failed, try again</p>';return}
+ window.R=r;
+ $('results').innerHTML=r.map((v,i)=>'<div class="card"><img src="'+v.thumb+'"><div class="t">'+esc(v.title)+' <span class="muted">'+(v.dur||'')+'</span></div><button class="s" onclick="add('+i+')">+ Add</button></div>').join('')}
+function add(i){send({type:'add',video:window.R[i]});$('results').innerHTML='';$('q').value=''}
+function addMsg(m){const box=$('msgs');const near=box.scrollHeight-box.scrollTop-box.clientHeight<80;
+ const mine=m.name===($('name').value||'guest');const d=document.createElement('div');d.className='m'+(mine?' me':'');
+ const t=new Date(m.t).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+ d.innerHTML='<b>'+esc(m.name)+'</b><span class="tm">'+t+'</span><br>'+esc(m.text);
+ box.appendChild(d);if(near||mine)box.scrollTop=box.scrollHeight;
+ while(box.children.length>100)box.removeChild(box.firstChild)}
+function sendChat(){const i=$('cin');const t=i.value.trim();if(!t)return;send({type:'chat',text:t});i.value=''}
+let snd=true,ac=null;try{snd=localStorage.getItem('snd')!=='0'}catch(e){}
+$('snd').textContent=snd?'🔔':'🔕';
+function ping(){if(!snd)return;try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();if(ac.state==='suspended')ac.resume();
+ const t=ac.currentTime;[[660,0],[880,0.09]].forEach(([f,d])=>{const o=ac.createOscillator(),g=ac.createGain();o.type='sine';o.frequency.value=f;
+  g.gain.setValueAtTime(0.0001,t+d);g.gain.exponentialRampToValueAtTime(0.07,t+d+0.01);g.gain.exponentialRampToValueAtTime(0.0001,t+d+0.14);
+  o.connect(g);g.connect(ac.destination);o.start(t+d);o.stop(t+d+0.16)})}catch(e){}}
+function toggleSnd(){snd=!snd;try{localStorage.setItem('snd',snd?'1':'0')}catch(e){}$('snd').textContent=snd?'🔔':'🔕';if(snd)ping()}
+(function(){document.querySelectorAll('.sp').forEach(function(el){var s=[];for(var k=0;k<16;k++){s.push(Math.round(Math.random()*100)+'vw '+Math.round(Math.random()*100)+'vh 0 '+(Math.random()<.3?1:0)+'px rgba(170,235,215,.9)')}el.style.boxShadow=s.join(',')});
+document.addEventListener('visibilitychange',function(){document.getElementById('bg').classList.toggle('off',document.hidden)})})();
+let bad=0;
+function tapPlay(){try{player.unMute();player.setVolume(vol);player.playVideo()}catch(e){}$('tap').style.display='none';bad=0}
+setInterval(()=>{
+ if(!ready){$('status').textContent='Loading player… (if stuck: refresh, or turn off adblock)';return}
+ if(!S||!S.cur){$('status').textContent='Add a song to start';$('tap').style.display='none';return}
+ $('status').textContent='';
+ const st=player.getPlayerState();
+ if(!S.paused&&st!==1&&st!==3){if(++bad>=2){$('tap').style.display='block'}}else{bad=0;$('tap').style.display='none'}
+},1000);
+if(window.YT&&YT.Player)onYouTubeIframeAPIReady();
+else{const t=document.createElement('script');t.src='https://www.youtube.com/iframe_api';document.head.appendChild(t)}
+</script></body></html>
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SyncJam</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#0f0f14;color:#eee}
+.wrap{max-width:720px;margin:0 auto;padding:16px}h1{margin:8px 0}
+input,button{padding:12px;border-radius:10px;border:0;font-size:16px}input{background:#1d1d27;color:#fff;width:100%}
+button{background:#0e9f6e;color:#fff;cursor:pointer}button.s{background:#2a2a38;padding:8px 12px}
+.row{display:flex;gap:8px;margin:8px 0}.card{background:#1a1a24;border-radius:12px;padding:10px;margin:6px 0;display:flex;gap:10px;align-items:center}
+.card img{width:80px;border-radius:6px}.card .t{flex:1;font-size:14px}#join{max-width:360px;margin:20vh auto;display:flex;flex-direction:column;gap:10px}
+#player{width:100%;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000}.muted{color:#999;font-size:13px}#player{pointer-events:none}#seek{padding:0;accent-color:#0e9f6e}
+
+.wrap{max-width:1080px}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start}
+@media(max-width:860px){.layout{grid-template-columns:1fr}#chat{height:380px!important;position:static!important}}
+#chat{background:#14141c;border-radius:12px;display:flex;flex-direction:column;height:560px;position:sticky;top:12px;overflow:hidden}
+#chat h3{margin:0;padding:12px 12px 8px;font-size:15px}
+#msgs{flex:1;overflow-y:auto;padding:4px 12px;display:flex;flex-direction:column;gap:10px}
+.m{font-size:14px;word-break:break-word;line-height:1.35}.m b{color:#6ee7b7}.m.me b{color:#7dd3fc}.m .tm{color:#777;font-size:11px;margin-left:6px}
+#cbox{display:flex;gap:6px;padding:8px;border-top:1px solid #23232f}#cbox input{flex:1;min-width:0}
+
+html{background:#02060e}body{background:transparent}
+#bg{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;
+ background:radial-gradient(ellipse at 15% 110%,rgba(10,110,80,.30),transparent 55%),radial-gradient(ellipse at 90% -10%,rgba(20,60,150,.28),transparent 55%),linear-gradient(180deg,#02060e 0%,#050f24 50%,#06231f 100%)}
+.wave{position:absolute;left:0;bottom:0;width:200%;animation:wv linear infinite;will-change:transform}
+.w1{height:24vh;animation-duration:24s}.w2{height:19vh;animation-duration:34s;animation-direction:reverse}.w3{height:30vh;animation-duration:48s}
+@keyframes wv{to{transform:translate3d(-50%,0,0)}}
+.sp{position:absolute;left:0;top:0;width:2px;height:2px;border-radius:50%;animation:tw ease-in-out infinite;will-change:opacity}
+.s1{animation-duration:3.2s}.s2{animation-duration:5.1s;animation-delay:-1.7s}.s3{animation-duration:7.3s;animation-delay:-3.9s}
+@keyframes tw{0%,100%{opacity:.15}50%{opacity:1}}
+.off *{animation-play-state:paused!important}
+@media(prefers-reduced-motion:reduce){.wave,.sp{animation:none}}
+.card{background:rgba(7,18,30,.88)}#chat{background:rgba(5,14,24,.9)}
+input{background:rgba(9,22,34,.94)}button.s{background:rgba(18,40,48,.92)}
+
+</style></head><body><div id="bg"><i class="sp s1"></i><i class="sp s2"></i><i class="sp s3"></i><svg class="wave w3" viewBox="0 0 2400 200" preserveAspectRatio="none"><path fill="#0f766e" fill-opacity=".20" d="M0,100 C200,40 400,40 600,100 S1000,160 1200,100 S1600,40 1800,100 S2200,160 2400,100 V200 H0 Z"/></svg><svg class="wave w2" viewBox="0 0 2400 200" preserveAspectRatio="none"><path fill="#1e3a8a" fill-opacity=".40" d="M0,100 C200,40 400,40 600,100 S1000,160 1200,100 S1600,40 1800,100 S2200,160 2400,100 V200 H0 Z"/></svg><svg class="wave w1" viewBox="0 0 2400 200" preserveAspectRatio="none"><path fill="#065f46" fill-opacity=".38" d="M0,100 C200,40 400,40 600,100 S1000,160 1200,100 S1600,40 1800,100 S2200,160 2400,100 V200 H0 Z"/></svg></div>
+<div id="join"><h1>🎧 SyncJam</h1>
+<input id="name" placeholder="Your name"><input id="room" placeholder="Room name (share with friends)" value="main">
+<button onclick="go()">Join & Listen</button></div>
+<div class="wrap" id="app" style="display:none">
+<h1>🎧 SyncJam <span class="muted" id="users"></span></h1>
+<div class="layout"><div class="main">
+<div style="position:relative"><div id="player"></div><button id="tap" onclick="tapPlay()" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:16px 28px;font-size:18px">▶ Tap to play</button></div><div id="status" class="muted"></div>
+<div class="row" style="align-items:center"><span id="cur" class="muted">0:00</span><input type="range" id="seek" min="0" max="100" value="0" step="1"><span id="dur" class="muted">0:00</span></div>
+<div class="row" style="align-items:center;flex-wrap:wrap"><button class="s" id="pp" onclick="toggle()">⏯</button><button class="s" onclick="send({type:'skip'})">⏭ Skip</button>
 <button class="s" onclick="navigator.clipboard.writeText(location.origin+'/?room='+room);this.textContent='Copied!'">🔗 Invite link</button><span>🔊</span><input type="range" id="vol" min="0" max="100" value="80" style="width:110px;padding:0;accent-color:#0e9f6e"><button class="s" onclick="leave()" title="Forget my name on this device">🚪 Leave</button></div>
 <div class="row"><input id="q" placeholder="Search a song or paste a YouTube link" onkeydown="if(event.key==='Enter')search()"><button onclick="search()">Search</button></div>
 <div id="results"></div><h3>Queue</h3><div id="queue"></div></div><aside id="chat"><h3 style="display:flex;justify-content:space-between;align-items:center">💬 Chat <button class="s" id="snd" onclick="toggleSnd()" title="Sounds on/off" style="padding:4px 10px">🔔</button></h3><div id="msgs"></div><div id="cbox"><input id="cin" maxlength="300" placeholder="Message everyone…" onkeydown="if(event.key==='Enter')sendChat()"><button onclick="sendChat()">Send</button></div></aside></div></div>
